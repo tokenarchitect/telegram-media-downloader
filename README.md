@@ -1,6 +1,6 @@
 # Telegram Media Downloader v2
 
-> **A powerful Python tool (Jupyter Notebook) that bulk-downloads all media from your Telegram channels and groups — including restricted/protected content — and optionally uploads them to your Saved Messages.**
+> **A powerful Python tool (Jupyter Notebook) that bulk-downloads all media from your Telegram channels and groups — including restricted/protected content — and optionally uploads them to your Saved Messages or Google Drive.**
 
 ---
 
@@ -32,14 +32,18 @@
 - [Functionality Flow](#functionality-flow)
   - [Download Flow](#download-flow)
   - [Upload Flow (Send to Saved Messages)](#upload-flow-send-to-saved-messages)
+  - [File Renamer Flow](#file-renamer-flow)
+  - [Google Drive Flow](#google-drive-flow)
   - [How Restricted Channel Downloads Work](#how-restricted-channel-downloads-work)
 - [Walkthrough: A Complete Example Session](#walkthrough-a-complete-example-session)
   - [Step 1: Launch & Authentication](#step-1-launch--authentication)
   - [Step 2: Channel Selection](#step-2-channel-selection)
   - [Step 3: Media Scanning & File Selection](#step-3-media-scanning--file-selection)
   - [Step 4: Downloading](#step-4-downloading)
-  - [Step 5: Upload to Saved Messages](#step-5-upload-to-saved-messages)
-  - [Step 6: Session Summary](#step-6-session-summary)
+  - [Step 5: Rename Files Using Captions](#step-5-rename-files-using-captions)
+  - [Step 6: Move to Google Drive](#step-6-move-to-google-drive)
+  - [Step 7: Upload to Saved Messages](#step-7-upload-to-saved-messages)
+  - [Step 8: Session Summary](#step-8-session-summary)
 - [Main Menu Reference](#main-menu-reference)
 - [File Structure](#file-structure)
 - [Configuration](#configuration)
@@ -66,7 +70,7 @@
 
 ## Introduction
 
-**Telegram Media Downloader v2** is an asynchronous Python application packaged as a **Jupyter Notebook** (`telegram_downloader.ipynb` — 76 cells, ~2,136 lines of code) designed to run on **Google Colab** or any Jupyter environment. It lets you bulk-download every type of media from your Telegram channels and groups — photos, videos, documents, audio files, voice messages, video notes, GIFs, and stickers — **including content from restricted/protected channels** where Telegram's official apps disable the "Save" and "Forward" buttons.
+**Telegram Media Downloader v2** is an asynchronous Python application packaged as a **Jupyter Notebook** (`telegram_downloader.ipynb` — 72 cells, ~2,400 lines of code) designed to run on **Google Colab** or any Jupyter environment. It lets you bulk-download every type of media from your Telegram channels and groups — photos, videos, documents, audio files, voice messages, video notes, GIFs, and stickers — **including content from restricted/protected channels** where Telegram's official apps disable the "Save" and "Forward" buttons.
 
 ### The Problem It Solves
 
@@ -80,9 +84,10 @@ Unlike simple download scripts, this tool was built for **real-world usage on la
 
 - **Chunked resume** — Interrupted 2 GB downloads resume from where they left off, not from zero
 - **Intelligent throttle handling** — Telegram's `FloodWait` and `FloodPremiumWait` rate limits are automatically detected, waited out, and retried
-- **Zero data loss** — `download_tracker.json` and `sent_tracker.json` ensure you never re-download or re-upload a file, even across sessions or Colab crashes
+- **Zero data loss** — `download_tracker.json`, `sent_tracker.json`, and `drive_tracker.json` ensure you never re-download, re-upload, or re-transfer a file, even across sessions or Colab crashes
 - **Optimized for Google Colab** — Auto-installs dependencies, patches the event loop, enables `uvloop`, and runs at 5-10 MB/s download speed (vs ~200 KB/s locally on free accounts)
 - **Upload to Saved Messages** — After downloading, you can send files to your Telegram Saved Messages with parallel uploads, photo batching, and progress tracking
+- **Google Drive integration** — Hash-based deduplication + copy/move to Drive with progress tracking (Colab)
 
 ---
 
@@ -109,10 +114,35 @@ Unlike simple download scripts, this tool was built for **real-world usage on la
 - **Smart remaining-file detection** — Shows already-sent count vs remaining; numbered menu: `[1] Send remaining N`, `[2] Send all`, `[3] Select`, `[4] Skip`
 - **Saved Messages scan (opt-in)** — Scans Saved Messages captions to recover sent-tracker state after Colab session loss
 - **Sent tracker** — `sent_tracker.json` prevents re-uploading files already sent
-- **Adaptive upload delays** — No delay for small files; 1s (50-100MB), 10s (100-500MB), 20s (>500MB) for large files only
+- **Adaptive upload delays** — 3s (<100MB), 10s (100-500MB), 20s (>500MB) cooldown between uploads
 - **Upload progress with speed/ETA** — Real-time progress bar for files >50 MB
 - **Premium detection** — Auto-detects Premium accounts (4 GB upload limit vs 2 GB free)
 - **Ctrl+C safe** — Saves sent tracker on interrupt during upload
+
+### File Renamer (Caption to Filename)
+- **Rename downloaded files using Telegram captions** — Replaces generic names like `video_123.mp4` with meaningful names from message captions (e.g., `Mahabharatham - Ep. 85 - Shakuni's Treacherous Plot.mp4`)
+- **Auto-detect environment** — Works on both Google Colab and local machines, auto-discovers paths
+- **Channel auto-discovery** — Scans `telegram_downloads/` folder, lists channels with file counts and sizes
+- **5 matching strategies** — Matches downloaded files to Telegram messages by: (1) exact filename, (2) message ID pattern, (3) file unique ID, (4) date+time pattern, (5) file size
+- **Fuzzy duplicate prevention** — Normalizes text (strips punctuation/spaces) before comparing to avoid double-naming files that already have the caption
+- **Smart caption cleaning** — Strips `[@ChannelName]` forwarding tags, trailing `@mentions`, and takes first line of multi-line captions
+- **Number-only caption handling** — Detects numeric captions like "187" and formats as `Ep. 187 - filename.mp4` instead of appending raw numbers
+- **Dry run mode** — Preview all renames before applying (`DRY_RUN = True`)
+- **Rename log** — Saves `_rename_log.txt` per channel with old/new names, captions, and unmatched files
+- **Uses existing Pyrogram session** — No re-login needed, reuses `my_telegram_session.session`
+- **Standalone script** — `rename.py`, run separately from the main app
+
+### Google Drive Integration (Colab)
+- **Copy or move downloads to Google Drive** — Transfers downloaded files to `My Drive/telegram_downloads/ChannelName/` with a single menu option
+- **Zero extra dependencies** — Uses `google.colab.drive.mount()` + `shutil.copy2` (no API keys or OAuth2 setup needed)
+- **Copy vs Move mode** — Choose to keep local files (copy) or free up Colab storage (move)
+- **Hash-based deduplication** — SHA-256 content fingerprint (first 8KB + last 8KB + file size) detects identical files regardless of filename. Automatically finds and offers to delete duplicates before transfer
+- **Smart duplicate naming** — When duplicates are found, keeps the best-named file (caption-based names over raw Telegram names, avoids `(1)` suffixes)
+- **Hash verification after transfer** — Verifies content hash matches after each copy/move (not just file size)
+- **Drive tracker with hashes** — `drive_tracker.json` stores per-file content fingerprints, prevents re-transferring across sessions
+- **Progress bar with speed/ETA** — Visual progress bar `[███████░░░] 45.2%` with per-file and average transfer speed
+- **Ctrl+C safe** — Saves drive tracker every 5 files and on interrupt
+- **Standalone script** — `move_to_drive.py` for quick transfers without launching the full app
 
 ### Performance Optimizations
 - **Upload pipeline patch** — Monkey-patches Pyrogram's `save_file()` upload queue from `Queue(1)` to `Queue(16)` — **3-8x upload speed improvement**
@@ -122,15 +152,14 @@ Unlike simple download scripts, this tool was built for **real-world usage on la
 - **3 concurrent download streams** — `max_concurrent_transmissions=3`
 
 ### User Experience
-- **Main menu loop** — Persistent session with 7 options, no need to restart between operations
+- **Main menu loop** — Persistent session with 8 options on Colab (7 on local), no need to restart between operations
 - **Channel stats dashboard** — Per-channel download counts, last updated dates, total disk usage
 - **Session stats** — Live counters: files downloaded, failed, total size, elapsed time
 - **Retry failed downloads** — One-click retry of all failed files with fresh file references
-- **Graceful Ctrl+C** — Saves tracker + adds remaining queue to retry list on interrupt
+- **Graceful Ctrl+C** — Saves all trackers + adds remaining queue to retry list on interrupt
 - **Custom file naming** — Template system with `{filename}`, `{date}`, `{msgid}`, `{type}`, `{ext}` placeholders
 - **Preserve file dates** — Sets file modification time to original Telegram message date
 - **Estimated sizes per type** — Samples up to 50 files per media type with stride-based spread
-- **Batch progress** — Real-time speed and ETA after each file
 
 ### Platform Support
 - **Windows** — UTF-8 output wrapping, `WindowsSelectorEventLoopPolicy`
@@ -295,6 +324,73 @@ Then run all cells in order.
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### File Renamer Flow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              FILE RENAMER FLOW (rename.py)                    │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  1. Auto-detect environment (Colab vs local)                │
+│                         │                                   │
+│  2. Discover downloaded channel folders                     │
+│     └── Show file counts + sizes, user selects channels     │
+│                         │                                   │
+│  3. Connect to Telegram (reuses existing session)           │
+│                         │                                   │
+│  4. Fuzzy-match channel folder → Telegram chat              │
+│                         │                                   │
+│  5. Scan all messages in channel:                           │
+│     ├── Match each message to a downloaded file             │
+│     │   via 5 strategies (name → ID → unique_id →           │
+│     │   date+time → file size)                              │
+│     └── Extract + clean caption text                        │
+│                         │                                   │
+│  6. For each matched file with caption:                     │
+│     ├── Strip [@channel] tags, take first line              │
+│     ├── Number-only captions → "Ep. NNN - file.ext"         │
+│     ├── Fuzzy check: skip if caption already in filename    │
+│     └── Generic names (video_123) → replace with caption    │
+│         Named files → append caption as suffix              │
+│                         │                                   │
+│  7. DRY_RUN=True: preview | DRY_RUN=False: rename           │
+│                         │                                   │
+│  8. Save _rename_log.txt with full old→new mapping          │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Google Drive Flow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              GOOGLE DRIVE TRANSFER FLOW                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  1. Mount Google Drive (auto OAuth prompt)                  │
+│                         │                                   │
+│  2. Scan downloaded channel folders with file counts        │
+│                         │                                   │
+│  3. User selects channels + Copy vs Move mode               │
+│                         │                                   │
+│  4. Per-channel hash-based dedup:                           │
+│     ├── SHA-256 fingerprint (first 8KB + last 8KB + size)   │
+│     ├── Group files by content hash                         │
+│     ├── Show duplicates: which to delete, which to keep     │
+│     └── User confirms deletion                              │
+│                         │                                   │
+│  5. Transfer unique files to Drive:                         │
+│     ├── shutil.copy2() or shutil.move()                     │
+│     ├── Hash verification after each transfer               │
+│     ├── Drive collision check by hash (not filename)        │
+│     └── Progress bar with speed + ETA                       │
+│                         │                                   │
+│  6. Track in drive_tracker.json (with content hashes)       │
+│     └── Periodic saves every 5 files + on Ctrl+C           │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### How Restricted Channel Downloads Work
 
 Telegram's **"Restrict saving content"** is a **client-side UI flag**, not an API-level restriction.
@@ -377,10 +473,11 @@ The main menu appears, and you choose option 1 to select channels:
     4) Send files to Saved Messages
     5) Retry failed downloads
     6) Channel stats dashboard
-    7) Exit
+    7) Copy/Move files to Google Drive        ← Colab only
+    8) Exit
   ============================================================
 
-  Choose option (1-7): 1
+  Choose option (1-8): 1
 ```
 
 Your channels and groups are listed:
@@ -508,12 +605,122 @@ After confirmation, downloads begin with real-time progress:
 - Adaptive delays between files (3s, 5s, 10s) reduce Telegram throttling
 - Batch progress shows running speed average and ETA
 
-### Step 5: Upload to Saved Messages
+### Step 5: Rename Files Using Captions
+
+After downloading, your files have generic names like `video_123.mp4`. Run `rename.py` to add captions:
+
+```
+  !python /content/telegram_downloader/rename.py
+
+  ============================================================
+    Telegram File Renamer — Caption to Filename
+  ============================================================
+    ENV: Google Colab
+    Base: /content/telegram_downloader
+    MODE: DRY RUN (preview only, no files will be renamed)
+  ============================================================
+
+    Downloaded channels:
+       #   Files        Size  Channel Name
+    ----  ------  ----------  -----------------------------------
+       1     197    52.98 GB  Maha bhratam All Eps
+
+    Select channels to rename (e.g., 1 or 1,2 or A for all): 1
+    [OK] Connected to Telegram
+    [OK] Found 197 media files in folder
+    [OK] Matched to Telegram channel: Maha bhratam All Eps
+
+    Scanning messages for captions...
+
+    [PREVIEW] msg#198
+      OLD: video_198.mp4
+      NEW: Mahabharatham - Ep. 197 - The Grand Coronation.mp4
+      CAP: Mahabharatham - Ep. 197 - The Grand Coronation
+
+    [PREVIEW] msg#89
+      OLD: Mahabharatham - Ep. 88 - The Dice Game.mp4
+      NEW: (skipped — caption already in filename)
+
+    ==========================================================
+    SUMMARY
+    ==========================================================
+    Files in directory:     197
+    Matched to messages:    197
+    Had captions:           190
+    Already properly named: 7
+    No message match:       0
+    Would rename:           190
+
+    >>> Set DRY_RUN = False and run again to apply renames <<<
+    ==========================================================
+```
+
+Set `DRY_RUN = False` at the top of `rename.py` and run again to apply the renames.
+
+### Step 6: Move to Google Drive
+
+After downloading and renaming, move files to Google Drive to free Colab storage:
+
+```
+  !python /content/telegram_downloader/move_to_drive.py
+
+  ==============================================================
+    Move to Google Drive -- Telegram Downloads
+  ==============================================================
+    ENV:    Google Colab
+    Source: /content/telegram_downloader/telegram_downloads
+    Target: /content/drive/MyDrive/telegram_downloads
+    Dedup:  Content hash (SHA-256 fingerprint)
+  ==============================================================
+
+    [OK] Google Drive mounted successfully
+    [OK] Target directory ready
+
+    Channels found:
+       #   Files        Size  Channel
+    ----  ------  ----------  ------------------------------
+       1     197    52.98 GB  Maha bhratam All Eps
+
+    Select channels (e.g., 1 or A for all): 1
+
+    Transfer mode:
+    [1] Move to Drive (delete local after — frees Colab storage)
+    [2] Copy to Drive (keep local files)
+    Choose (1/2/3): 1
+
+    Hashing 197 files for duplicate detection...
+      Hashed 197/197
+
+    Unique files to transfer: 194
+    DUPLICATES FOUND: 3 files (789.45 MB)
+      DELETE: video_2020-02-06_08-30-15_86.mp4
+        KEEP: Mahabharatham - Ep. 85 - Shakuni's Treacherous Plot.mp4
+    Delete 3 duplicates? (y/n): y
+
+    [1/194] [██████░░░░░░░░░░░░░░░░░░░░░░░░] 3.2%  22.5 MB/s ETA 38m 2s
+      > Mahabharatham - Ep. 197 - The Grand Coronation.mp4 (282.45 MB)
+
+    ...
+
+  ==============================================================
+    TRANSFER COMPLETE
+  ==============================================================
+    Transferred: 194 files (52.19 GB)
+    Dups deleted: 3 files (789.45 MB freed)
+    Time: 42m 15s
+    Avg speed: 21.2 MB/s
+    Destination: /content/drive/MyDrive/telegram_downloads
+  ==============================================================
+```
+
+You can also use **option 7** from the main menu instead of the standalone script.
+
+### Step 7: Upload to Saved Messages
 
 From the main menu, choose option 4 to upload downloaded files to your Saved Messages:
 
 ```
-  Choose option (1-7): 4
+  Choose option (1-8): 4
 
   Downloaded channels (1):
 
@@ -564,9 +771,9 @@ Uploads run in parallel (up to 3 concurrent). For free accounts, you'll see `FLO
   [OK] Total sent to Saved Messages: 4, Failed: 0
 ```
 
-### Step 6: Session Summary
+### Step 8: Session Summary
 
-When you exit (option 7), you get a final session summary:
+When you exit (option 8 on Colab, 7 on local), you get a final session summary:
 
 ```
   ============================================================
@@ -583,10 +790,12 @@ When you exit (option 7), you get a final session summary:
   Disconnected from Telegram.
 ```
 
-**Total time breakdown for this session:**
+**Typical session time breakdown:**
 - Download: ~10 minutes (4 files, 2.25 GB at ~3.8 MB/s)
-- Upload: ~27 minutes (4 files, 2.25 GB at ~1.4 MB/s — throttled by Telegram)
-- Menu/scanning/delays: ~8 minutes
+- Rename: ~1 minute (scans channel messages, renames files)
+- Drive transfer: ~5 minutes (copy/move at ~20 MB/s on Colab)
+- Upload to Saved: ~27 minutes (4 files, 2.25 GB at ~1.4 MB/s — throttled by Telegram)
+- Menu/scanning/delays: ~5 minutes
 
 ---
 
@@ -602,7 +811,8 @@ When you exit (option 7), you get a final session summary:
     4) Send files to Saved Messages
     5) Retry failed downloads (3 failed)
     6) Channel stats dashboard
-    7) Exit
+    7) Copy/Move files to Google Drive        ← Colab only
+    8) Exit
   ============================================================
 ```
 
@@ -614,7 +824,8 @@ When you exit (option 7), you get a final session summary:
 | **4** | Upload previously downloaded files to your Telegram Saved Messages |
 | **5** | Retry all files that failed in this session (re-fetches fresh file references from Telegram) |
 | **6** | Dashboard: per-channel file counts, last updated dates, total disk usage |
-| **7** | Save all tracker data to disk and disconnect from Telegram |
+| **7** | Copy or move downloaded files to Google Drive (Colab only; option hidden on local) |
+| **8** | Save all tracker data to disk and disconnect from Telegram (option 7 on local) |
 
 ---
 
@@ -622,13 +833,20 @@ When you exit (option 7), you get a final session summary:
 
 ```
 telegram_downloader/
-  telegram_downloader.ipynb     # Main notebook (76 cells, ~2,136 lines of code)
+  telegram_downloader.py        # Main application (Python script)
+  telegram_downloader.ipynb     # Main notebook (Jupyter version)
+  convert_to_ipynb.py           # Converts .py to .ipynb (section docstrings → markdown cells)
+  rename.py                     # Renames downloaded files using Telegram captions
+  move_to_drive.py              # Standalone: hash-dedup + move/copy to Google Drive
+  cleanup.py                    # Standalone: delete duplicate files by content hash
+  fix_file_reference_expired.py # Reference: FileReferenceExpired fix (copy-pasteable sections)
   requirements.txt              # pyrofork, TgCrypto-pyrofork
   README.md                     # This documentation file
   tg_config.json                # API credentials (auto-created on first run)
   my_telegram_session.session   # Pyrogram session file (DO NOT SHARE)
   download_tracker.json         # Tracks downloaded message IDs per channel
   sent_tracker.json             # Tracks files already sent to Saved Messages
+  drive_tracker.json            # Tracks files copied/moved to Google Drive (with content hashes)
   telegram_downloads/           # Downloaded media, organized by channel name
     ChannelName1/
       video_123.mp4
@@ -665,6 +883,10 @@ All constants are defined in **Section 5 (Constants & Configuration)** of `teleg
 | `UPLOAD_BATCH_SIZE` | 10 | Max photos per `send_media_group` batch |
 | `UPLOAD_CONCURRENT` | 3 | Max parallel file uploads |
 | `UPLOAD_SAVE_EVERY` | 10 | Save sent_tracker every N successful uploads |
+| **Google Drive (Colab)** | | |
+| `DRIVE_MOUNT_POINT` | `/content/drive` | Google Drive mount path on Colab |
+| `DRIVE_ROOT_DIR` | `telegram_downloads` | Folder name inside My Drive |
+| `DRIVE_HASH_CHUNK` | 8192 (8KB) | Chunk size for content fingerprint hash |
 | **File Naming** | | |
 | `FILE_NAME_TEMPLATE` | `""` | Custom naming template (empty = original filename) |
 
@@ -758,7 +980,21 @@ On Colab re-runs (same kernel), the sqlite3 monkey-patch could re-apply on an al
 }
 ```
 
-Both trackers use cached sets (`_ids_set` / `_files_set`) for O(1) duplicate lookups at runtime, stripped before writing to disk.
+**drive_tracker.json** — Tracks files copied/moved to Google Drive (with content hashes):
+```json
+{
+  "ChannelName": {
+    "files": ["video_3.mp4", "photo_5.jpg"],
+    "hashes": {
+      "video_3.mp4": "a1b2c3d4e5f6...",
+      "photo_5.jpg": "f6e5d4c3b2a1..."
+    },
+    "last_updated": "2026-03-15T10:00:00.000000"
+  }
+}
+```
+
+All trackers use cached sets (`_ids_set` / `_files_set`) for O(1) duplicate lookups at runtime, stripped before writing to disk.
 
 ---
 
@@ -787,13 +1023,11 @@ pyrogram.errors.exceptions.flood_420.FloodPremiumWait: ...
 
 **Is it a problem?** **No** — the uploads complete successfully. The tracebacks are Pyrogram's internal logging, not actual errors in the tool. The files are uploaded correctly and completely.
 
-**Status:** Open. Potential fix: suppress the `save_file` logger specifically:
+**Status:** Fixed. The `save_file` logger is now suppressed:
 ```python
 logging.getLogger("pyrogram.methods.advanced.save_file").setLevel(logging.CRITICAL)
 ```
-This would silence the worker tracebacks while keeping other useful Pyrogram warnings.
-
-**Trade-off:** Suppressing these logs means you won't see the per-chunk retry details. For most users this is fine, but for debugging upload issues it could hide useful information.
+This silences the worker tracebacks while keeping other useful Pyrogram warnings. Per-chunk retry details are no longer visible, but uploads complete correctly and the session log remains readable.
 
 ---
 
@@ -854,6 +1088,8 @@ WARNING:pyrogram.session.session:[.../my_telegram_session] Waiting for 10 second
 | `nest_asyncio` | (Colab only) | Patches running event loop in Colab's Jupyter environment |
 | `uvloop` | (Colab only) | 2-4x faster async event loop (Linux only) |
 
+**Standard library modules used:** `asyncio`, `hashlib` (SHA-256 dedup), `shutil` (Drive transfers), `json`, `os`, `re`, `sys`, `time`, `logging`, `io`, `sqlite3`
+
 ---
 
 ## Future Work
@@ -861,21 +1097,21 @@ WARNING:pyrogram.session.session:[.../my_telegram_session] Waiting for 10 second
 These were identified during development but not yet implemented:
 
 ### High Priority
-- **Hash-based deduplication** — Use `file_unique_id` to detect duplicate files across channels
 - **Download speed limiter** — Configurable bandwidth cap to reduce FloodWait frequency
 - **Proxy/SOCKS5 support** — For users behind firewalls (`Client(proxy=...)`)
 - **Export media list to CSV** — Channel inventory without downloading
-- **Suppress `save_file` worker tracebacks** — Reduce log noise during uploads (see [Issue 1](#issue-1-flood_premium_wait-log-spam-during-uploads))
+- ~~**Hash-based deduplication**~~ — Done (v2.2). SHA-256 content fingerprint detects identical files regardless of filename
+- ~~**Caption-based file renaming**~~ — Done (v2.2). `rename.py` renames files using Telegram captions with 5 matching strategies
+- ~~**Suppress `save_file` worker tracebacks**~~ — Done (v2.1)
+- ~~**Google Drive auto-backup**~~ — Done (v2.1, Colab only). Local machine support via OAuth2 planned.
 
 ### Medium Priority
-- **Caption/metadata preservation** — Save message text alongside media files
 - **Date range filter** — Download only messages from a specific date range
 - **File type filter** — e.g., only `.mp4` videos, skip `.mkv`
 - **Parallel file downloads** — Download 2-3 files simultaneously (with FloodWait backoff)
-- **Google Drive auto-backup** — Mount Drive on Colab and sync downloads
 
 ### Low Priority
-- **Progress bar with `tqdm`** — Replace custom progress display
+- **Progress bar with `tqdm`** — Replace custom progress display with `tqdm` library
 - **Config file for all settings** — Move constants to a `settings.json`
 - **Telegram bot notification** — Send download completion alerts via bot
 - **Web UI** — Simple local web interface instead of CLI
@@ -899,6 +1135,9 @@ These were identified during development but not yet implemented:
 | 0-byte files in downloads | The tool auto-detects and removes these. Old 0-byte files are skipped during upload |
 | `ModuleNotFoundError: pyrogram` | Run `pip install pyrofork TgCrypto-pyrofork` |
 | Colab session disconnects | Re-run the cell. Tracker files persist — the tool skips already-downloaded files. Use Saved Messages scan to recover upload tracker |
+| rename.py: "No message match" for some files | These are likely re-download duplicates with `_{msg_id}_{large_number}` suffix. Run `cleanup.py` to remove them |
+| rename.py: `FileNotFoundError` crash | Run once per session only. If files were already renamed, the script skips them via fuzzy matching |
+| rename.py: Wrong channel matched | The script asks for confirmation on fuzzy matches. Enter `n` and check available channels list |
 
 ---
 
